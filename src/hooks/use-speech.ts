@@ -1,7 +1,7 @@
-
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useToast } from './use-toast';
 
 export const useSpeech = (
   onTranscript: (transcript: string) => void,
@@ -10,6 +10,7 @@ export const useSpeech = (
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const recognitionRef = useRef<any>(null);
+  const { toast } = useToast();
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -32,10 +33,23 @@ export const useSpeech = (
           onSpeechEnd();
         };
 
+        recognition.onerror = (event: any) => {
+          console.error("Speech recognition error", event.error);
+           toast({
+            variant: "destructive",
+            title: "Ses Tanıma Hatası",
+            description: "Mikrofon izni verilmemiş veya bir hata oluştu. Lütfen kontrol edin.",
+          });
+          setIsListening(false);
+          onSpeechEnd();
+        }
+
         recognitionRef.current = recognition;
+      } else {
+         console.warn("SpeechRecognition API is not supported in this browser.");
       }
     }
-  }, [onTranscript, onSpeechEnd]);
+  }, [onTranscript, onSpeechEnd, toast]);
 
   const startListening = useCallback(() => {
     if (recognitionRef.current && !isListening) {
@@ -44,17 +58,33 @@ export const useSpeech = (
         setIsListening(true);
       } catch (error) {
         console.error("Speech recognition could not start.", error);
+        toast({
+          variant: "destructive",
+          title: "Dinleme Başlatılamadı",
+          description: "Lütfen tarayıcı izinlerinizi kontrol edin.",
+        });
         setIsListening(false);
       }
     }
+  }, [isListening, toast]);
+  
+  const stopListening = useCallback(() => {
+    if (recognitionRef.current && isListening) {
+      try {
+        recognitionRef.current.stop();
+        setIsListening(false);
+      } catch (error) {
+        console.error("Speech recognition could not be stopped.", error);
+      }
+    }
   }, [isListening]);
+
 
   const speak = useCallback((text: string, onEnd: () => void) => {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = 'tr-TR';
 
-      // Find a Turkish voice
       const voices = window.speechSynthesis.getVoices();
       const turkishVoice = voices.find(voice => voice.lang === 'tr-TR');
       if (turkishVoice) {
@@ -68,22 +98,35 @@ export const useSpeech = (
         setIsSpeaking(false);
         onEnd();
       };
+
+      utterance.onerror = (event) => {
+        console.error("Speech synthesis error", event.error);
+        toast({
+          variant: "destructive",
+          title: "Konuşma Hatası",
+          description: "Yapay zeka yanıtı seslendirilemedi.",
+        });
+        setIsSpeaking(false);
+        onEnd();
+      };
       
-      // Ensure other utterances are cancelled
       window.speechSynthesis.cancel();
       window.speechSynthesis.speak(utterance);
+    } else {
+        console.warn("SpeechSynthesis API is not supported in this browser.");
+        onEnd(); // fallback to ensure state is reset
     }
-  }, []);
+  }, [toast]);
 
-  // Pre-load voices
   useEffect(() => {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.getVoices();
-      if (window.speechSynthesis.onvoiceschanged !== undefined) {
-        window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
-      }
+        const loadVoices = () => window.speechSynthesis.getVoices();
+        loadVoices();
+        if (window.speechSynthesis.onvoiceschanged !== undefined) {
+            window.speechSynthesis.onvoiceschanged = loadVoices;
+        }
     }
   }, []);
 
-  return { isListening, isSpeaking, startListening, speak };
+  return { isListening, isSpeaking, startListening, stopListening, speak };
 };
